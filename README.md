@@ -518,3 +518,4 @@ máximo de conexión, bajá `STREAM_HEARTBEAT_MS`; si cortara la conexión, el
 frontend reconecta solo.
 
 # danza-check
+# danza-check-frontend
