@@ -1,5 +1,6 @@
 package com.danza_check.demo;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -11,8 +12,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -289,6 +292,142 @@ class AsistenciaApiTest extends ApiTestBase {
 				.content("{nombre"))
 			.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.status").value(400));
+	}
+
+	@Test
+	@DisplayName("Borrar una asistencia requiere autenticación")
+	void eliminarAsistenciaSinAutenticacionDevuelve401() throws Exception {
+		long id = idDeSesionCreada();
+		long asistenciaId = registrarYDevolverIdDeAsistencia(id);
+
+		mockMvc.perform(delete("/api/sesiones/" + id + "/asistencias/" + asistenciaId))
+			.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	@DisplayName("Borrar una asistencia devuelve 204 y la quita del listado")
+	void eliminarAsistenciaDevuelve204() throws Exception {
+		long id = idDeSesionCreada();
+		long asistenciaId = registrarYDevolverIdDeAsistencia(id);
+
+		mockMvc.perform(delete("/api/sesiones/" + id + "/asistencias/" + asistenciaId)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		mockMvc.perform(get("/api/sesiones/" + id + "/asistencias")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(0));
+	}
+
+	@Test
+	@DisplayName("Borrar una asistencia baja el conteo")
+	void eliminarAsistenciaBajaElConteo() throws Exception {
+		long id = idDeSesionCreada();
+		long asistenciaId = registrarYDevolverIdDeAsistencia(id);
+		registrarYDevolverIdDeAsistencia(id, "segunda@ejemplo.com");
+
+		mockMvc.perform(delete("/api/sesiones/" + id + "/asistencias/" + asistenciaId)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		mockMvc.perform(get("/api/sesiones/" + id + "/asistencias/count")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.cantidad").value(1));
+	}
+
+	@Test
+	@DisplayName("Borrar solo quita la asistencia indicada y deja las demás")
+	void eliminarAsistenciaNoTocaLasDemas() throws Exception {
+		long id = idDeSesionCreada();
+		long asistenciaId = registrarYDevolverIdDeAsistencia(id);
+		registrarYDevolverIdDeAsistencia(id, "otra@ejemplo.com");
+
+		mockMvc.perform(delete("/api/sesiones/" + id + "/asistencias/" + asistenciaId)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		mockMvc.perform(get("/api/sesiones/" + id + "/asistencias")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(1))
+			.andExpect(jsonPath("$[0].correo").value("otra@ejemplo.com"));
+	}
+
+	@Test
+	@DisplayName("No se puede borrar desde una sesión ajena la asistencia de otra")
+	void eliminarAsistenciaDeOtraSesionDevuelve404() throws Exception {
+		long idConLaAsistencia = idDeSesionCreada();
+		long asistenciaId = registrarYDevolverIdDeAsistencia(idConLaAsistencia);
+		long otraSesionId = idDeSesionCreada();
+
+		mockMvc.perform(delete("/api/sesiones/" + otraSesionId + "/asistencias/" + asistenciaId)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.status").value(404));
+
+		// La asistencia sigue viva: el 404 no la habia tocado.
+		mockMvc.perform(get("/api/sesiones/" + idConLaAsistencia + "/asistencias")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.length()").value(1));
+	}
+
+	@Test
+	@DisplayName("Borrar una asistencia inexistente devuelve 404")
+	void eliminarAsistenciaInexistenteDevuelve404() throws Exception {
+		long id = idDeSesionCreada();
+
+		mockMvc.perform(delete("/api/sesiones/" + id + "/asistencias/999999")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.status").value(404));
+	}
+
+	@Test
+	@DisplayName("Borrar en una sesión inexistente devuelve 404")
+	void eliminarAsistenciaDeSesionInexistenteDevuelve404() throws Exception {
+		mockMvc.perform(delete("/api/sesiones/999/asistencias/1")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNotFound());
+	}
+
+	@Test
+	@DisplayName("Se puede borrar de una sesión ya cerrada")
+	void eliminarAsistenciaDeSesionCerrada() throws Exception {
+		long id = idDeSesionCreada();
+		long asistenciaId = registrarYDevolverIdDeAsistencia(id);
+		mockMvc.perform(patch("/api/sesiones/" + id + "/cerrar")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isOk());
+
+		mockMvc.perform(delete("/api/sesiones/" + id + "/asistencias/" + asistenciaId)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+	}
+
+	/** Registra una asistencia en la sesión dada y devuelve su id. */
+	private long registrarYDevolverIdDeAsistencia(long sesionId) throws Exception {
+		return registrarYDevolverIdDeAsistencia(sesionId, CORREO);
+	}
+
+	/**
+	 * Igual que el anterior pero con el correo indicado: hace falta cuando la
+	 * prueba necesita dos asistencias en la misma sesión, porque el correo es
+	 * único por sesión.
+	 */
+	private long registrarYDevolverIdDeAsistencia(long sesionId, String correo) throws Exception {
+		String codigo = sesionRepository.findById(sesionId).orElseThrow().getCodigo();
+		MvcResult resultado = mockMvc
+			.perform(post("/api/sesiones/" + codigo + "/asistencias")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(cuerpoDeAsistencia(NOMBRE, correo)))
+			.andExpect(status().isCreated())
+			.andReturn();
+		return jsonMapper.readTree(resultado.getResponse().getContentAsString(StandardCharsets.UTF_8))
+			.get("id")
+			.asLong();
 	}
 
 }

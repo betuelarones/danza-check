@@ -17,6 +17,8 @@ import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 
 /**
  * Asistencia de un alumno a una sesion.
@@ -26,6 +28,10 @@ import lombok.NoArgsConstructor;
  * negocio, la base de datos rechaza el segundo INSERT con el mismo
  * correo en la misma sesion. El correo se normaliza a minusculas antes
  * de persistir para que no existan duplicados por mayusculas.
+ *
+ * <p>La FK hacia la sesion es ON DELETE CASCADE, y se declara aqui con
+ * {@link OnDelete} para que el esquema que genera Hibernate en las pruebas
+ * tenga la misma cascada que el que crea db/01-schema.sql en la base real.
  */
 @Entity
 @Table(name = "asistencia",
@@ -51,6 +57,7 @@ public class Asistencia {
 
 	@ManyToOne(fetch = FetchType.LAZY, optional = false)
 	@JoinColumn(name = "sesion_id", nullable = false, foreignKey = @ForeignKey(name = "fk_asistencia_sesion"))
+	@OnDelete(action = OnDeleteAction.CASCADE)
 	private SesionAsistencia sesion;
 
 	public Asistencia(String nombre, String correo, LocalDateTime fechaHora, SesionAsistencia sesion) {

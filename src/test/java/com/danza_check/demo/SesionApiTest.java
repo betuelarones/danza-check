@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -181,6 +182,108 @@ class SesionApiTest extends ApiTestBase {
 		mockMvc.perform(get("/api/sesiones/" + id).header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.activa").value(false));
+	}
+
+	@Test
+	@DisplayName("Eliminar sesión requiere autenticación")
+	void eliminarSesionSinAutenticacionDevuelve401() throws Exception {
+		long id = idDeSesionCreada();
+
+		mockMvc.perform(delete("/api/sesiones/" + id)).andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	@DisplayName("Eliminar sesión devuelve 204 y la quita del listado")
+	void eliminarSesionDevuelve204() throws Exception {
+		long id = idDeSesionCreada();
+
+		mockMvc.perform(delete("/api/sesiones/" + id)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		mockMvc.perform(get("/api/sesiones/" + id)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNotFound());
+	}
+
+	@Test
+	@DisplayName("Eliminar sesión inexistente devuelve 404")
+	void eliminarSesionInexistenteDevuelve404() throws Exception {
+		mockMvc.perform(delete("/api/sesiones/999")
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNotFound())
+			.andExpect(jsonPath("$.status").value(404));
+	}
+
+	@Test
+	@DisplayName("Eliminar una sesión se lleva también sus asistencias")
+	void eliminarSesionBorraSusAsistencias() throws Exception {
+		long id = idDeSesionCreada();
+		String codigo = sesionRepository.findById(id).orElseThrow().getCodigo();
+		for (int i = 0; i < 2; i++) {
+			mockMvc.perform(post("/api/sesiones/" + codigo + "/asistencias")
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(cuerpoDeAsistencia("Alumno " + i, "alumno" + i + "@ejemplo.com")))
+				.andExpect(status().isCreated());
+		}
+		assertThat(asistenciaRepository.countBySesionId(id)).isEqualTo(2);
+
+		mockMvc.perform(delete("/api/sesiones/" + id)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		assertThat(asistenciaRepository.findBySesionIdOrderByFechaHoraAscIdAsc(id)).isEmpty();
+		assertThat(sesionRepository.findById(id)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("Eliminar una sesión no toca las asistencias de otra")
+	void eliminarSesionNoTocaLasAsistenciasDeOtra() throws Exception {
+		long idAEliminar = idDeSesionCreada();
+		long idQueSeQueda = idDeSesionCreada();
+		String codigoQueSeQueda = sesionRepository.findById(idQueSeQueda).orElseThrow().getCodigo();
+		mockMvc.perform(post("/api/sesiones/" + codigoQueSeQueda + "/asistencias")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(cuerpoDeAsistencia("Se queda", "sequeda@ejemplo.com")))
+			.andExpect(status().isCreated());
+
+		mockMvc.perform(delete("/api/sesiones/" + idAEliminar)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		assertThat(asistenciaRepository.countBySesionId(idQueSeQueda)).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("El código de una sesión eliminada vuelve a quedar libre")
+	void elCodigoDeUnaSesionEliminadaSeLibera() throws Exception {
+		long id = idDeSesionCreada();
+		String codigo = sesionRepository.findById(id).orElseThrow().getCodigo();
+
+		mockMvc.perform(delete("/api/sesiones/" + id)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		// Si el código quedara ocupado, volver a insertarlo violaría la
+		// restricción única.
+		mockMvc.perform(delete("/api/sesiones/" + id)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNotFound());
+		assertThat(sesionRepository.findByCodigo(codigo)).isEmpty();
+	}
+
+	@Test
+	@DisplayName("Después de eliminar, el QR del enlace público da 404")
+	void elEnlacePublicoDeUnaSesionEliminadaDa404() throws Exception {
+		long id = idDeSesionCreada();
+		String codigo = sesionRepository.findById(id).orElseThrow().getCodigo();
+
+		mockMvc.perform(delete("/api/sesiones/" + id)
+				.header(cabeceraDeAutorizacion(), "Bearer " + tokenAdmin()))
+			.andExpect(status().isNoContent());
+
+		mockMvc.perform(get("/api/sesiones/codigo/" + codigo))
+			.andExpect(status().isNotFound());
 	}
 
 }

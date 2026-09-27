@@ -7,6 +7,7 @@ import com.danza_check.demo.dto.CrearSesionRequest;
 import com.danza_check.demo.dto.SesionPublicResponse;
 import com.danza_check.demo.dto.SesionResponse;
 import com.danza_check.demo.entity.SesionAsistencia;
+import com.danza_check.demo.evento.SesionCerradaEvento;
 import com.danza_check.demo.exception.CodigoGeneracionException;
 import com.danza_check.demo.exception.CodigoInvalidoException;
 import com.danza_check.demo.exception.DatosInvalidosException;
@@ -14,7 +15,9 @@ import com.danza_check.demo.exception.SesionNotFoundException;
 import com.danza_check.demo.repository.SesionAsistenciaRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -23,13 +26,17 @@ public class SesionService {
 
 	private static final Logger log = LoggerFactory.getLogger(SesionService.class);
 	private static final int MAX_INTENTOS_CODIGO = 10;
-
 	private final SesionAsistenciaRepository sesionRepository;
+
 	private final CodigoGenerador codigoGenerador;
 
-	public SesionService(SesionAsistenciaRepository sesionRepository, CodigoGenerador codigoGenerador) {
+	private final ApplicationEventPublisher eventPublisher;
+
+	public SesionService(SesionAsistenciaRepository sesionRepository, CodigoGenerador codigoGenerador,
+			ApplicationEventPublisher eventPublisher) {
 		this.sesionRepository = sesionRepository;
 		this.codigoGenerador = codigoGenerador;
+		this.eventPublisher = eventPublisher;
 	}
 
 	public SesionResponse crear(CrearSesionRequest request) {
@@ -66,8 +73,32 @@ public class SesionService {
 			sesion.cerrar();
 			sesionRepository.save(sesion);
 			log.info("Sesión {} ({}) cerrada.", sesion.getId(), sesion.getCodigo());
+			SesionResponse cerrada = aResponse(sesion);
+			// El oyente corre tras el commit y avisa al panel, que ya no
+			// tiene sentido escuchar una sesion cerrada.
+			eventPublisher.publishEvent(new SesionCerradaEvento(sesion.getId(), cerrada));
+			return cerrada;
 		}
 		return aResponse(sesion);
+	}
+
+
+	/**
+	 * Borra la sesión y, en cascada, sus asistencias. La cascada vive en la
+	 * base de datos (ON DELETE CASCADE), no aquí: así ninguna ruta de código
+	 * puede dejar asistencias apuntando a una sesión que ya no existe.
+	 *
+	 * <p>Es una eliminación definitiva, no un cierre. Para dejar de admitir
+	 * asistencias está {@link #cerrar(Long)}, que conserva el historial.
+	 */
+	public void eliminar(Long id) {
+		SesionAsistencia sesion = buscarPorId(id);
+		String codigo = sesion.getCodigo();
+		sesionRepository.delete(sesion);
+		// flush explicito: si la cascade fallara por datos que la base no
+		// conoce, el error sale aqui y no despues de haber devuelto 204.
+		sesionRepository.flush();
+		log.info("Sesión {} ({}) eliminada con sus asistencias.", id, codigo);
 	}
 
 	@Transactional(readOnly = true)

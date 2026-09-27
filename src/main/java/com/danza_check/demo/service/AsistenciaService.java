@@ -9,11 +9,14 @@ import com.danza_check.demo.dto.AsistenciaResponse;
 import com.danza_check.demo.dto.RegistrarAsistenciaRequest;
 import com.danza_check.demo.entity.Asistencia;
 import com.danza_check.demo.entity.SesionAsistencia;
+import com.danza_check.demo.evento.AsistenciaRegistradaEvento;
+import com.danza_check.demo.exception.AsistenciaNotFoundException;
 import com.danza_check.demo.exception.DuplicateAttendanceException;
 import com.danza_check.demo.exception.SesionCerradaException;
 import com.danza_check.demo.repository.AsistenciaRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,11 +32,16 @@ public class AsistenciaService {
 	private static final String MENSAJE_DUPLICADO = "La asistencia ya fue registrada para esta sesión.";
 
 	private final AsistenciaRepository asistenciaRepository;
+
 	private final SesionService sesionService;
 
-	public AsistenciaService(AsistenciaRepository asistenciaRepository, SesionService sesionService) {
+	private final ApplicationEventPublisher eventPublisher;
+
+	public AsistenciaService(AsistenciaRepository asistenciaRepository, SesionService sesionService,
+			ApplicationEventPublisher eventPublisher) {
 		this.asistenciaRepository = asistenciaRepository;
 		this.sesionService = sesionService;
+		this.eventPublisher = eventPublisher;
 	}
 
 	/**
@@ -52,7 +60,11 @@ public class AsistenciaService {
 		}
 		try {
 			Asistencia asistencia = new Asistencia(request.nombre().trim(), correo, LocalDateTime.now(), sesion);
-			return aResponse(asistenciaRepository.saveAndFlush(asistencia));
+			AsistenciaResponse guardada = aResponse(asistenciaRepository.saveAndFlush(asistencia));
+			// Se avisa por el stream, pero el oyente espera al commit: si
+			// esta transaccion revierte, el panel nunca llega a verla.
+			eventPublisher.publishEvent(new AsistenciaRegistradaEvento(sesion.getId(), guardada));
+			return guardada;
 		}
 		catch (DataIntegrityViolationException ex) {
 			// Dos peticiones simultáneas con el mismo correo: la restricción
@@ -74,6 +86,24 @@ public class AsistenciaService {
 	public AsistenciaCountResponse contarPorSesion(Long sesionId) {
 		sesionService.buscarPorId(sesionId);
 		return new AsistenciaCountResponse(asistenciaRepository.countBySesionId(sesionId));
+	}
+
+	/**
+	 * Borra una asistencia de la sesión. Se usa cuando alguien se apunta por
+	 * error, pone un correo equivocado y el listado hay que corregirlo.
+	 *
+	 * <p>La búsqueda va acotada por sesión a propósito: si solo se mirara el
+	 * id, un id válido de otra sesión se podría borrar desde esta URL.
+	 */
+	public void eliminar(Long sesionId, Long asistenciaId) {
+		sesionService.buscarPorId(sesionId);
+		Asistencia asistencia = asistenciaRepository.findByIdAndSesionId(asistenciaId, sesionId)
+			.orElseThrow(() -> new AsistenciaNotFoundException(
+					"La asistencia " + asistenciaId + " no pertenece a la sesión " + sesionId + "."));
+		asistenciaRepository.delete(asistencia);
+		// flush explicito: el borrado sale dentro de esta transacción y no se
+		// aplaza hasta que termine, para no devolver 204 y dejar la fila viva.
+		asistenciaRepository.flush();
 	}
 
 	/**

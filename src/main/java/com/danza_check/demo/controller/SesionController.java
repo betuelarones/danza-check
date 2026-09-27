@@ -9,6 +9,7 @@ import com.danza_check.demo.service.SesionService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -54,6 +55,17 @@ public class SesionController {
 	@PatchMapping("/{id}/cerrar")
 	public SesionResponse cerrar(@PathVariable Long id) {
 		return sesionService.cerrar(id);
+	}
+
+	/**
+	 * Elimina la sesión de forma definitiva, junto con sus asistencias. Es
+	 * distinto de cerrar: cerrar conserva el historial y solo deja de admitir
+	 * gente nueva.
+	 */
+	@DeleteMapping("/{id}")
+	public ResponseEntity<Void> eliminar(@PathVariable Long id) {
+		sesionService.eliminar(id);
+		return ResponseEntity.noContent().build();
 	}
 
 }
