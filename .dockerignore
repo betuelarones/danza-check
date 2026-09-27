@@ -1,0 +1,13 @@
+# Lo que no tiene que viajar al contexto de build de Docker.
+target/
+.git/
+.vscode/
+.idea/
+*.iml
+*.log
+
+# Credenciales reales: si estas dos lineas faltan, "COPY . ." las mete en la
+# imagen y quedan exposed en cualquier registry donde se publique.
+.env
+.env.*
+!.env.example
