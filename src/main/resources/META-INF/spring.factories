@@ -1,0 +1,2 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.danza_check.demo.config.DataSourceUrlPostProcessor
